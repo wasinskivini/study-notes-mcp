@@ -4,7 +4,7 @@ As mudanças de cada versão. O formato segue o [Keep a Changelog](https://keepa
 
 ## [1.4.0] - 2026-11-15
 
-Correções encontradas no uso real. À pergunta "o que eu tenho no material sobre o módulo 4?", o Claude Code respondeu abrindo a pasta pelo terminal, em vez de usar o servidor.
+Correções encontradas no uso real. À pergunta "o que eu tenho no material sobre o módulo 4?", o Claude Code respondeu abrindo a pasta pelo terminal, em vez de usar o servidor. E, com vários clientes abertos, cada um montava o mesmo índice ao mesmo tempo.
 
 ### Corrigido
 - **As proteções e as dicas não chegavam ao modelo no Claude Code, no VS Code e no Codex.** Quatro tools (`listar_modulos`, `listar_arquivos`, `buscar_material` e `ver_estudos`) respondiam em texto e também em JSON (`structuredContent`). Quando há JSON, esses clientes mandam ao modelo só o JSON e descartam o texto ([Claude Code](https://github.com/anthropics/claude-code/issues/55677), [VS Code](https://github.com/microsoft/vscode/issues/290063), [Codex](https://github.com/openai/codex/issues/38287)).
@@ -30,6 +30,21 @@ Correções encontradas no uso real. À pergunta "o que eu tenho no material sob
 
   A resposta passou a cobrir o módulo inteiro.
 - Quem lia o JSON (`structuredContent`) num programa: ele não existe mais, e o texto traz os mesmos dados.
+- **Só um servidor monta o índice de cada vez.** Cada cliente (o VS Code, cada sessão do Claude Code, o Codex) abre o próprio servidor, e todos usam o mesmo índice em `DATA_DIR`. Na primeira indexação, todos calculavam o índice inteiro ao mesmo tempo, cada um com o modelo carregado.
+  - **Como funciona agora:** o primeiro cria uma trava (`DATA_DIR/indice-semantico.trava`). Os outros esperam sem carregar o modelo, mostram o progresso dele no aviso da busca e no `estudos://indice` (`feitoPorOutroCliente`) e depois aproveitam o índice salvo.
+  - **Se algo der errado:** se a trava não puder ser criada, se quem indexa for encerrado ou parar de dar sinal por 60 s, ou se a espera passar de 30 min, cada servidor indexa sozinho, como antes.
+  - **Medição:** 3 servidores abertos ao mesmo tempo na primeira indexação do material real (~1.700 arquivos).
+
+    | | 1.3.0 | 1.4.0 |
+    |---|---|---|
+    | Até os 3 ficarem prontos | 26,2 min | 5,8 min |
+    | Memória somada no pico | 3,6 GB | 2,4 GB |
+    | Modelos carregados | 3 | 1 |
+    | Busca durante a indexação | 4,9–5,6 s | 0,6–1,7 s |
+- **O modelo só é carregado quando há algo para calcular:** arquivos novos ou alterados, ou a primeira busca.
+  - **Ganho:** com o índice em dia, um servidor aberto fica com ~0,3 GB até a primeira busca, em vez de ~1,4 GB. Com o servidor configurado para todas as sessões do Claude Code, as sessões que não consultam o material deixam de ocupar ~1 GB cada.
+  - **Custo:** a primeira busca de cada sessão leva ~0,6 s a mais (1,3 s em vez de 0,7 s).
+  - O log do servidor diz quando o modelo é carregado.
 
 ## [1.3.0] - 2026-11-14
 

@@ -19,6 +19,7 @@ tests/
   mcp.test.ts        # PASSO 5.3 — testes de ponta a ponta
   semantic.test.ts   # PASSO 5.4 — busca semântica sem o modelo (trechos, similaridade, fusão)
   semantic.model.ts  # PASSO 5.5 — busca semântica com o modelo de verdade
+  trava.model.ts     # PASSO 5.5b — vários servidores com o mesmo DATA_DIR: só um monta o índice
   pacote.smoke.ts    # PASSO 5.6 — instala o pacote do npm numa pasta vazia e sobe o servidor
   avaliacao.model.ts # PASSO 5.7 — mede o acerto das buscas (literal, semântica e híbrida)
   secoes.model.ts    # PASSO 5.7b — mede se a busca por significado devolve a seção certa de notas longas
