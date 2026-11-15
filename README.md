@@ -85,6 +85,7 @@ Algo deu errado? Veja os [problemas comuns](https://github.com/wasinskivini/stud
 | `Marque a aula 05 do modulo03 como concluída` | `marcar_aula_concluida` |
 | `Quais dúvidas eu ainda tenho pendentes?` | `ver_estudos` |
 | `Que anotações e PDFs existem no módulo 3?` | `listar_arquivos` |
+| `O que eu tenho no material sobre o módulo 4?` | `listar_arquivos` (num módulo grande, o panorama das aulas) → `ler_material` nos READMEs |
 
 Os prompts prontos aparecem digitando `/` no chat: `/mcp.study-notes-mcp.gerar_quiz` monta um quiz sobre um módulo, com a fonte de cada resposta, e `/mcp.study-notes-mcp.plano_de_revisao` monta a revisão da semana a partir das suas dúvidas. No quiz, o módulo pode ser o número (`3`), um trecho do nome (`mcp`) ou o caminho da pasta. Se ficar vazio ou houver mais de uma pasta parecida, o assistente pergunta qual você quer. Quem escreve o quiz e o plano é o modelo do chat: o servidor entrega o pedido e o material.
 
@@ -93,7 +94,7 @@ Os prompts prontos aparecem digitando `/` no chat: `/mcp.study-notes-mcp.gerar_q
 | Tipo | Nome | O que faz |
 |---|---|---|
 | 🔧 Tool | `listar_modulos` | Lista os módulos (subpastas de `NOTES_DIR`) |
-| 🔧 Tool | `listar_arquivos` | Lista os arquivos de um módulo, com tipo e tamanho, para saber o que existe antes de ler |
+| 🔧 Tool | `listar_arquivos` | Mostra o que existe num módulo: os arquivos, com tipo e tamanho, ou, acima de 100, as subpastas com a contagem e o começo do README de cada uma |
 | 🔧 Tool | `buscar_material` | Busca por nome exato ou por pergunta em anotações, PDFs e código, com filtro por tipo e por módulo |
 | 🔧 Tool | `ler_material` | Lê uma anotação, um arquivo de código ou páginas de um PDF |
 | 🔧 Tool | `registrar_duvida` | Salva uma dúvida para revisar depois |

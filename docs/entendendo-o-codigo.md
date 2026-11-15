@@ -52,10 +52,12 @@ Copilot ── tools/call buscar_material {consulta:"RAG", tipos:["pdf"]} ──
                                                                         PASSO 3.6    └ pontua e ordena (nome, título, palavra inteira, tipo)
                                                                         PASSO 4.4    └ cada trecho: invisíveis, alertas, segredos
                                                                         PASSO 4.5  delimita como <dados_nao_confiaveis>
-Copilot ◄──────────────────── resultado (texto + structuredContent) ──  PASSO 1.1  sai pelo stdout
+Copilot ◄──────────────────────────────── resultado (só texto) ──  PASSO 1.1  sai pelo stdout
 ```
 
 Depois disso, o modelo decide se lê as páginas (`ler_material` → PASSO 2.5 → 3.7 → 3.9 → 3.8 → 4.4 → 4.5) e escreve a resposta.
+
+**Por que só texto?** O MCP permite devolver, junto do texto, uma versão em JSON da resposta (`structuredContent`, descrita por um `outputSchema`). Parece melhor ter as duas, mas, quando o JSON existe, o Claude Code, o VS Code e o Codex mandam ao modelo **só o JSON** e descartam o texto ([Claude Code](https://github.com/anthropics/claude-code/issues/55677), [VS Code](https://github.com/microsoft/vscode/issues/290063), [Codex](https://github.com/openai/codex/issues/38287)). E é no texto que estão a delimitação `<dados_nao_confiaveis>`, os alertas e as dicas para o modelo. Até a 1.3.0 este servidor mandava os dois; um teste agora garante que nenhuma tool volte a mandar JSON.
 
 ## Como o quiz e o plano de revisão funcionam
 

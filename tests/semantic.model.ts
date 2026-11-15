@@ -11,7 +11,7 @@ import { cp, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client'
-import { createTestClient } from './helpers.ts'
+import { createTestClient, resultadosDe } from './helpers.ts'
 import { buildPdf } from './pdf.ts'
 
 describe('busca semântica: com modelo', () => {
@@ -52,7 +52,7 @@ describe('busca semântica: com modelo', () => {
 
     it('should find content by meaning, without the same words', { timeout: 180_000 }, async () => {
         const result = await buscar('como transformar texto em vetores numéricos?')
-        const [primeiro] = result.structuredContent.resultados
+        const [primeiro] = resultadosDe(result)
         assert.strictEqual(primeiro.arquivo, join('modulo01', 'aula-rag.pdf'))
         assert.strictEqual(primeiro.pagina, 2)
         assert.match(result.content[0].text, /<dados_nao_confiaveis/)
@@ -72,11 +72,11 @@ describe('busca semântica: com modelo', () => {
 
     it('should rank unrelated content lower', { timeout: 60_000 }, async () => {
         const result = await buscar('receita de bolo')
-        assert.strictEqual(result.structuredContent.resultados[0].arquivo, join('modulo01', 'receita.md'))
+        assert.strictEqual(resultadosDe(result)[0].arquivo, join('modulo01', 'receita.md'))
     })
 
     it('should restrict by type', { timeout: 60_000 }, async () => {
         const result = await buscar('embeddings', { tipos: ['anotacoes'] })
-        assert.ok(result.structuredContent.resultados.every((r: { arquivo: string }) => !r.arquivo.endsWith('.pdf')))
+        assert.ok(resultadosDe(result).every((r: { arquivo: string }) => !r.arquivo.endsWith('.pdf')))
     })
 })
