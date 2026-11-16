@@ -2,15 +2,19 @@
 
 As mudanças de cada versão. O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/), e as versões seguem o [Versionamento Semântico](https://semver.org/lang/pt-BR/): a versão maior muda quando algo deixa de funcionar como antes (nome de tool, parâmetro, formato dos dados salvos).
 
-## [1.4.0] - 2026-11-15
+## [1.4.0] - 2026-11-16
 
-Correções encontradas no uso real. À pergunta "o que eu tenho no material sobre o módulo 4?", o Claude Code respondeu abrindo a pasta pelo terminal, em vez de usar o servidor. E, com vários clientes abertos, cada um montava o mesmo índice ao mesmo tempo.
+Correções encontradas no uso real. À pergunta "o que eu tenho no material sobre o módulo 4?", o Claude Code respondeu abrindo a pasta pelo terminal, em vez de usar o servidor. Com vários clientes abertos, cada um montava o mesmo índice ao mesmo tempo. E a busca por significado precisava de internet toda vez que o modelo era carregado.
 
 ### Corrigido
 - **As proteções e as dicas não chegavam ao modelo no Claude Code, no VS Code e no Codex.** Quatro tools (`listar_modulos`, `listar_arquivos`, `buscar_material` e `ver_estudos`) respondiam em texto e também em JSON (`structuredContent`). Quando há JSON, esses clientes mandam ao modelo só o JSON e descartam o texto ([Claude Code](https://github.com/anthropics/claude-code/issues/55677), [VS Code](https://github.com/microsoft/vscode/issues/290063), [Codex](https://github.com/openai/codex/issues/38287)).
   - **Era no texto que estavam:** a delimitação `<dados_nao_confiaveis>`, o alerta de prompt injection, o aviso 🔒 de credenciais mascaradas e as dicas ("mostrando 100 de 634", "índice em construção", "limite de 20 resultados").
   - **O que continuava funcionando:** as credenciais seguiam mascaradas, porque isso acontece antes.
   - **Agora:** as tools respondem só em texto, que todos os clientes repassam ao modelo, e um teste garante que nenhuma volte a mandar JSON.
+- **A busca por significado não funcionava sem internet**, mesmo com o modelo já baixado.
+  - **Por quê:** carregado pelo nome, o modelo fazia a biblioteca consultar o Hugging Face a cada carregamento, para conferir se um arquivo do tokenizer existe (fora da revisão fixada e sem prazo para a resposta).
+  - **Efeito:** sem internet, o carregamento falhava e só a busca literal funcionava. Com o site lento, ficava parado; foi o que travou um teste no CI.
+  - **Agora:** já baixado, o modelo é lido direto da pasta da revisão fixada em `MODELS_DIR`, sem acesso à rede. Os vetores são os mesmos, e um teste sobe o servidor com a rede bloqueada.
 
 ### Alterado
 - **`listar_arquivos` com mais de 100 arquivos mostra um panorama**, em vez dos 100 primeiros, que num curso eram só os das primeiras aulas. Numa chamada só, cada subpasta aparece com:
