@@ -17,10 +17,12 @@ import { buildPdf } from './pdf.ts'
 describe('busca semântica: com modelo', () => {
     let client: Client
     let root: string
+    let notesDir: string
+    const modelsDir = process.env.MODELS_DIR ?? join(tmpdir(), 'study-notes-mcp-modelos')
 
     before(async () => {
         root = await mkdtemp(join(tmpdir(), 'study-notes-semantic-'))
-        const notesDir = join(root, 'notas')
+        notesDir = join(root, 'notas')
         await cp('tests/fixtures/notas', notesDir, { recursive: true })
         await writeFile(join(notesDir, 'modulo01', 'receita.md'), 'Bolo de cenoura: misture farinha, ovos, açúcar e asse por 40 minutos.')
         await writeFile(join(notesDir, 'modulo01', 'aula-rag.pdf'), buildPdf([
@@ -28,10 +30,7 @@ describe('busca semântica: com modelo', () => {
             ['Embeddings convertem frases em listas de numeros que capturam o significado'],
         ]))
         // MODELS_DIR fora da pasta temporária: o modelo é baixado uma vez e reaproveitado.
-        client = await createTestClient(notesDir, join(root, 'data'), {
-            SEMANTIC_SEARCH: 'true',
-            MODELS_DIR: process.env.MODELS_DIR ?? join(tmpdir(), 'study-notes-mcp-modelos'),
-        })
+        client = await createTestClient(notesDir, join(root, 'data'), { SEMANTIC_SEARCH: 'true', MODELS_DIR: modelsDir })
     })
 
     after(async () => {
@@ -40,9 +39,9 @@ describe('busca semântica: com modelo', () => {
     })
 
     // Espera o índice ficar pronto (sem o aviso "em construção").
-    async function buscar(pergunta: string, extra: Record<string, unknown> = {}) {
+    async function buscar(pergunta: string, extra: Record<string, unknown> = {}, cliente = client) {
         for (let tentativa = 0; tentativa < 240; tentativa++) {
-            const result = await client.callTool({ name: 'buscar_material', arguments: { consulta: pergunta, ...extra } }) as any
+            const result = await cliente.callTool({ name: 'buscar_material', arguments: { consulta: pergunta, ...extra } }) as any
             if (result.isError) throw new Error(result.content[0].text)
             if (!/em construção/.test(result.content[0].text)) return result
             await new Promise(resolve => setTimeout(resolve, 500))
@@ -78,5 +77,25 @@ describe('busca semântica: com modelo', () => {
     it('should restrict by type', { timeout: 60_000 }, async () => {
         const result = await buscar('embeddings', { tipos: ['anotacoes'] })
         assert.ok(resultadosDe(result).every((r: { arquivo: string }) => !r.arquivo.endsWith('.pdf')))
+    })
+
+    // Com o modelo já em MODELS_DIR (baixado no before), nada vai à rede. O
+    // tests/sem-rede.cjs faz todo acesso à rede falhar, como sem internet.
+    // Antes, o carregamento consultava o Hugging Face e falhava sem internet.
+    it('should load the downloaded model without internet', { timeout: 120_000 }, async () => {
+        const semRede = await createTestClient(notesDir, join(root, 'data-sem-rede'), {
+            SEMANTIC_SEARCH: 'true',
+            MODELS_DIR: modelsDir,
+            NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --require=./tests/sem-rede.cjs`.trim(),
+        })
+        try {
+            const result = await buscar('como transformar texto em vetores numéricos?', {}, semRede)
+            assert.doesNotMatch(result.content[0].text, /não está disponível/)
+            const [primeiro] = resultadosDe(result)
+            assert.strictEqual(primeiro.arquivo, join('modulo01', 'aula-rag.pdf'))
+            assert.strictEqual(primeiro.porSignificado, true)
+        } finally {
+            await semRede.close()
+        }
     })
 })

@@ -54,6 +54,8 @@ import { prepareUntrusted, redactSecrets } from './safety.ts';
 // versão nova (ou maliciosa) no Hugging Face, ela não é baixada sem querer.
 const MODEL = 'Snowflake/snowflake-arctic-embed-m-v2.0';
 const MODEL_REVISION = '95c2741480856aa9666782eb4afe11959938017f';
+// O que o modelo precisa em MODELS_DIR/<modelo>/<revision>/ (6.2).
+const ARQUIVOS_DO_MODELO = ['config.json', 'tokenizer.json', 'tokenizer_config.json', 'onnx/model_quantized.onnx'];
 // Muda quando o formato do índice, o modelo ou o corte em trechos mudam: o
 // índice antigo é refeito. 2: trechos cortados nos títulos Markdown (1.2.0).
 // 3: modelo arctic-embed e cabeçalho (arquivo e seção) em cada trecho (1.3.0).
@@ -102,15 +104,28 @@ function loadEmbedder(): Promise<Embedder> {
             throw new Error('Biblioteca @huggingface/transformers não instalada. Com npx, acrescente "--package=@huggingface/transformers@4.3.2" nos args (veja "Busca por significado" no README); a partir do código-fonte, rode "npm install".');
         });
         // Único acesso à internet do servidor: baixar o modelo na primeira vez.
-        // Depois ele fica em MODELS_DIR e é lido do disco. Seus arquivos nunca
-        // são enviados: os vetores são calculados aqui, localmente.
+        // Depois ele fica em MODELS_DIR e é lido do disco (veja abaixo). Seus
+        // arquivos nunca são enviados: os vetores são calculados aqui, localmente.
         env.cacheDir = config.modelsDir;
         // Só erros no log (40 = LogLevel.ERROR, desde a 4.3.1). O modelo usa uma
         // arquitetura ("gte") que a biblioteca roda pelo caminho genérico e
         // avisa a cada início ("Unknown model class"); o aviso não muda nada no
         // resultado (vetores conferidos) e só assustaria no log do cliente.
         env.logLevel = 40;
-        const extractor = await pipeline('feature-extraction', MODEL, { dtype: 'q8', revision: MODEL_REVISION });
+        // Já baixado (todos os arquivos na pasta da revisão fixada), o modelo é
+        // lido de lá, sem acesso à rede. Pelo nome, a biblioteca consulta o
+        // Hugging Face a cada carregamento (confere se um arquivo do tokenizer
+        // existe, sem prazo): sem internet falhava, e com o site lento ficava
+        // parado. Todos os arquivos são conferidos porque, com um faltando
+        // (download interrompido), ela montaria o modelo sem ele, sem erro.
+        env.localModelPath = config.modelsDir;
+        env.allowLocalModels = true;
+        const pasta = join(config.modelsDir, MODEL, MODEL_REVISION);
+        const baixado = (await Promise.all(ARQUIVOS_DO_MODELO.map(arquivo => stat(join(pasta, arquivo)).then(() => true, () => false)))).every(Boolean);
+        const extractor = baixado
+            ? await pipeline('feature-extraction', `${MODEL}/${MODEL_REVISION}`, { dtype: 'q8' })
+            // Primeira vez: baixa pelo nome, na revisão fixada, para a mesma pasta.
+            : await pipeline('feature-extraction', MODEL, { dtype: 'q8', revision: MODEL_REVISION });
         // No log (stderr) porque é o que mais pesa na memória do servidor (~1 GB).
         console.error('Modelo da busca por significado carregado');
         return async (texts: string[]) => {
