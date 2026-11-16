@@ -19,6 +19,7 @@ tests/
   mcp.test.ts        # PASSO 5.3 — testes de ponta a ponta
   semantic.test.ts   # PASSO 5.4 — busca semântica sem o modelo (trechos, similaridade, fusão)
   semantic.model.ts  # PASSO 5.5 — busca semântica com o modelo de verdade
+  trava.model.ts     # PASSO 5.5b — vários servidores com o mesmo DATA_DIR: só um monta o índice
   pacote.smoke.ts    # PASSO 5.6 — instala o pacote do npm numa pasta vazia e sobe o servidor
   avaliacao.model.ts # PASSO 5.7 — mede o acerto das buscas (literal, semântica e híbrida)
   secoes.model.ts    # PASSO 5.7b — mede se a busca por significado devolve a seção certa de notas longas
@@ -52,10 +53,12 @@ Copilot ── tools/call buscar_material {consulta:"RAG", tipos:["pdf"]} ──
                                                                         PASSO 3.6    └ pontua e ordena (nome, título, palavra inteira, tipo)
                                                                         PASSO 4.4    └ cada trecho: invisíveis, alertas, segredos
                                                                         PASSO 4.5  delimita como <dados_nao_confiaveis>
-Copilot ◄──────────────────── resultado (texto + structuredContent) ──  PASSO 1.1  sai pelo stdout
+Copilot ◄──────────────────────────────── resultado (só texto) ──  PASSO 1.1  sai pelo stdout
 ```
 
 Depois disso, o modelo decide se lê as páginas (`ler_material` → PASSO 2.5 → 3.7 → 3.9 → 3.8 → 4.4 → 4.5) e escreve a resposta.
+
+**Por que só texto?** O MCP permite devolver, junto do texto, uma versão em JSON da resposta (`structuredContent`, descrita por um `outputSchema`). Parece melhor ter as duas, mas, quando o JSON existe, o Claude Code, o VS Code e o Codex mandam ao modelo **só o JSON** e descartam o texto ([Claude Code](https://github.com/anthropics/claude-code/issues/55677), [VS Code](https://github.com/microsoft/vscode/issues/290063), [Codex](https://github.com/openai/codex/issues/38287)). E é no texto que estão a delimitação `<dados_nao_confiaveis>`, os alertas e as dicas para o modelo. Até a 1.3.0 este servidor mandava os dois; um teste agora garante que nenhuma tool volte a mandar JSON.
 
 ## Como o quiz e o plano de revisão funcionam
 

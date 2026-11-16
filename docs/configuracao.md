@@ -18,7 +18,7 @@ As variáveis vão no bloco `"env"` do `mcp.json` (veja o passo 3 do [README](..
 | Variável | Padrão | Uso |
 |---|---|---|
 | `NOTES_DIR` | `~/Documents` | Pasta raiz do material (cada subpasta é um módulo). Use caminho absoluto |
-| `DATA_DIR` | `~/.study-notes-mcp` | Onde ficam `duvidas.json`, `progresso.json`, o texto extraído dos PDFs (`cache-pdf.json`) e o índice da busca por significado |
+| `DATA_DIR` | `~/.study-notes-mcp` | Onde ficam `duvidas.json`, `progresso.json`, o texto extraído dos PDFs (`cache-pdf.json`) e o índice da busca por significado (`indice-semantico.json`, com a trava `indice-semantico.trava` enquanto um servidor o monta) |
 | `INCLUDE_PDF` | `true` | `false` desliga totalmente a busca e a leitura de PDFs |
 | `SEMANTIC_SEARCH` | `false` | `true` liga a [busca por significado](busca-por-significado.md) |
 | `MODELS_DIR` | `DATA_DIR/modelos` | Onde o modelo de embeddings fica guardado depois do download |

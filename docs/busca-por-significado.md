@@ -57,7 +57,8 @@ Medido em três lugares:
 
 - A biblioteca ([transformers.js](https://huggingface.co/docs/transformers.js)) ocupa ~470 MB, por isso **não** vem junto com o pacote: só baixa quem acrescentar o segundo `--package`. Sem ela, o resto do servidor funciona normalmente.
 - Cada busca por significado devolve até 8 trechos de 500 caracteres, que se juntam aos da busca literal.
-- **Memória:** com a busca por significado ligada, cada servidor aberto usa ~1 GB (o modelo fica carregado). Cada cliente (VS Code, Claude Code, Codex) abre o seu próprio servidor.
+- **Memória:** cada cliente (o VS Code, cada sessão do Claude Code, o Codex) abre o seu próprio servidor. O modelo (~1 GB) só é carregado quando há algo para calcular: na indexação, em arquivos novos ou alterados, ou na primeira busca de cada sessão, que leva ~0,6 s a mais por isso. Um servidor aberto que ainda não buscou nada fica com ~0,3 GB; depois da primeira busca, com ~1,2–1,5 GB. Durante a primeira indexação, o servidor que indexa chega a ~2,2 GB.
+- **Vários clientes abertos:** só um servidor monta o índice de cada vez. Os outros esperam sem carregar o modelo, mostram o progresso dele no aviso da busca e no `estudos://indice` (`feitoPorOutroCliente`) e depois aproveitam o índice salvo. Se o servidor que está montando for encerrado, outro continua em segundos, a partir do que já foi salvo. Medido com 3 servidores abertos ao mesmo tempo na primeira indexação de ~1.700 arquivos: 5,8 min e um modelo carregado (pico de 2,4 GB somando os três).
 - Enquanto o índice é montado, os pedidos do cliente têm prioridade: a indexação pausa entre os lotes, e as buscas continuam respondendo.
 - Quem atualizou de uma versão anterior à 1.3.0 pode apagar o modelo antigo, em `MODELS_DIR/Xenova` (~120 MB).
 - A versão `4.3.2` da biblioteca é a testada com este servidor. Qualquer `4.x` a partir da `4.3.1` funciona: se a sua configuração já aponta para a `4.3.1`, não precisa mudar nada.

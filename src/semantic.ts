@@ -28,10 +28,12 @@
  *   6.2  carregar o modelo (download único)
  *   6.3  dividir arquivos em trechos
  *   6.4  o índice: construir, atualizar e salvar
+ *   6.4b um servidor indexa de cada vez (trava em DATA_DIR)
  *   6.5  buscar por similaridade
  *   6.6  busca híbrida: junta a busca literal e esta (usada pela tool buscar_material)
  */
-import { readFile, stat } from 'node:fs/promises';
+import { mkdir, open, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { readFileSync, rmSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import {
     carregarExclusao, config, enabledTypes, gravarAtomico, listNoteFiles, readSearchableLines, resolveInsideNotes,
@@ -109,6 +111,8 @@ function loadEmbedder(): Promise<Embedder> {
         // resultado (vetores conferidos) e só assustaria no log do cliente.
         env.logLevel = 40;
         const extractor = await pipeline('feature-extraction', MODEL, { dtype: 'q8', revision: MODEL_REVISION });
+        // No log (stderr) porque é o que mais pesa na memória do servidor (~1 GB).
+        console.error('Modelo da busca por significado carregado');
         return async (texts: string[]) => {
             // pooling cls + normalize: um vetor de tamanho 1 por texto, o que
             // permite comparar dois vetores com um simples produto escalar (6.5).
@@ -220,7 +224,9 @@ function partirLinha(line: string): string[] {
 // salvos em base64 (Float32), bem menor que uma lista de números em JSON.
 // O texto salvo já passou pelo PASSO 4.4: segredos chegam redigidos ao índice.
 const indice = new Map<string, ArquivoIndexado>();
-export const status = { estado: 'parado' as 'parado' | 'construindo' | 'pronto' | 'erro', feitos: 0, total: 0, erro: '' };
+// porOutro: o índice está sendo montado por outro servidor (6.4b), e feitos/total
+// são o progresso dele.
+export const status = { estado: 'parado' as 'parado' | 'construindo' | 'pronto' | 'erro', feitos: 0, total: 0, erro: '', porOutro: false };
 let construcao: Promise<void> | undefined;
 let ultimaAtualizacao = 0;
 
@@ -239,14 +245,28 @@ const vetores = new Map<string, Float32Array[]>();
 
 // Lê o índice salvo em DATA_DIR. Se ele for de outra versão ou de outro modelo,
 // é ignorado e refeito, porque vetores de modelos diferentes não se comparam.
-async function carregarIndice(): Promise<void> {
+async function lerIndiceSalvo(): Promise<Map<string, ArquivoIndexado> | undefined> {
     try {
         const salvo = JSON.parse(await readFile(join(config.dataDir, INDEX_FILE), 'utf8'));
-        if (salvo.versao !== INDEX_VERSION || salvo.modelo !== `${MODEL}@${MODEL_REVISION}`) return;
-        for (const [arquivo, dados] of Object.entries<ArquivoIndexado>(salvo.arquivos)) indice.set(arquivo, dados);
+        if (salvo.versao !== INDEX_VERSION || salvo.modelo !== `${MODEL}@${MODEL_REVISION}`) return undefined;
+        return new Map(Object.entries<ArquivoIndexado>(salvo.arquivos));
     } catch {
         // Sem índice salvo (primeira vez) ou arquivo corrompido: começa do zero.
+        return undefined;
     }
+}
+async function carregarIndice(): Promise<void> {
+    for (const [arquivo, dados] of await lerIndiceSalvo() ?? []) indice.set(arquivo, dados);
+}
+// Depois de esperar outro servidor (6.4b): o índice que ele salvou substitui o
+// que está em memória, porque ele já processou tudo o que mudou. Se o arquivo
+// não puder ser lido, fica o que já estava em memória.
+async function recarregarIndice(): Promise<void> {
+    const salvo = await lerIndiceSalvo();
+    if (!salvo) return;
+    indice.clear();
+    vetores.clear();
+    for (const [arquivo, dados] of salvo) indice.set(arquivo, dados);
 }
 
 // Grava o índice em DATA_DIR com permissão 600: ele contém trechos das suas
@@ -277,12 +297,171 @@ async function esperarBuscas(): Promise<void> {
     }
 }
 
+// ----------------------------------------------------------------------------
+// 6.4b — UM SERVIDOR INDEXA DE CADA VEZ
+// ----------------------------------------------------------------------------
+// Cada cliente (o VS Code, cada sessão do Claude Code, o Codex) abre o próprio
+// servidor, e todos usam o mesmo índice em DATA_DIR. Sem combinar, na primeira
+// indexação todos calculavam o índice inteiro ao mesmo tempo, cada um com o
+// modelo carregado (visto com 3 servidores: ~23 min, em vez de ~6,5 min).
+// Agora quem chega primeiro cria uma trava, um arquivo pequeno em DATA_DIR; os
+// outros esperam, sem carregar o modelo, e depois aproveitam o índice salvo.
+//
+// Tudo aqui falha para o lado seguro: se a trava não puder ser criada, se o
+// dono dela sumir (processo encerrado) ou parar de dar sinal (notebook
+// dormindo), ou se a espera passar de TRAVA_ESPERA_MAX_MS, o servidor indexa
+// por conta própria, como antes. O pior caso é o comportamento antigo.
+const TRAVA_FILE = 'indice-semantico.trava';
+// O dono regrava a trava (com o progresso) a cada TRAVA_PULSO_MS. Sem ser
+// regravada por TRAVA_VENCIDA_MS, ou com o processo dono encerrado, ela é
+// considerada abandonada. Quem espera confere a cada TRAVA_CONSULTA_MS.
+const TRAVA_PULSO_MS = 10_000;
+const TRAVA_VENCIDA_MS = 60_000;
+const TRAVA_CONSULTA_MS = 2_000;
+const TRAVA_ESPERA_MAX_MS = 30 * 60_000;
+type Trava = { pid: number; feitos: number; total: number };
+const caminhoDaTrava = () => join(config.dataDir, TRAVA_FILE);
+const conteudoDaTrava = () => JSON.stringify({ pid: process.pid, feitos: status.feitos, total: status.total } satisfies Trava);
+let pulso: NodeJS.Timeout | undefined;
+let temTrava = false;
+let saidaRegistrada = false;
+const esperar = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+// 'nossa': este servidor indexa. 'outro': outro servidor está indexando.
+// 'sem': não deu para usar a trava (DATA_DIR sem permissão, por exemplo).
+async function pegarTrava(): Promise<'nossa' | 'outro' | 'sem'> {
+    try {
+        await mkdir(config.dataDir, { recursive: true, mode: 0o700 });
+        for (let tentativa = 0; tentativa < 2; tentativa++) {
+            try {
+                // flag 'wx': só cria se o arquivo não existir. De vários processos
+                // tentando ao mesmo tempo, o sistema garante que só um consegue.
+                await writeFile(caminhoDaTrava(), conteudoDaTrava(), { flag: 'wx', mode: 0o600 });
+                temTrava = true;
+                comecarPulso();
+                return 'nossa';
+            } catch (error) {
+                if ((error as NodeJS.ErrnoException).code !== 'EEXIST') return 'sem';
+            }
+            if (await travaAtiva()) return 'outro';
+            // Abandonada: apaga e tenta criar de novo (uma vez só).
+            await rm(caminhoDaTrava(), { force: true });
+        }
+        return 'outro';
+    } catch {
+        return 'sem';
+    }
+}
+
+// A trava de outro servidor, ou undefined se ela não existe ou foi abandonada.
+async function travaAtiva(): Promise<Trava | undefined> {
+    const info = await stat(caminhoDaTrava()).catch(() => undefined);
+    if (!info || Date.now() - info.mtimeMs > TRAVA_VENCIDA_MS) return undefined;
+    let trava: Partial<Trava> = {};
+    // Lida bem na hora de uma regravação, pode vir vazia: aí vale só a data.
+    try { trava = JSON.parse(await readFile(caminhoDaTrava(), 'utf8')); } catch { /* só a data */ }
+    if (typeof trava.pid === 'number' && (trava.pid === process.pid || !processoVivo(trava.pid))) return undefined;
+    return { pid: trava.pid ?? 0, feitos: trava.feitos ?? 0, total: trava.total ?? 0 };
+}
+
+// kill com o sinal 0 não encerra nada: só confere se o processo existe (também
+// no Windows). EPERM quer dizer que ele existe, mas é de outro usuário.
+function processoVivo(pid: number): boolean {
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch (error) {
+        return (error as NodeJS.ErrnoException).code === 'EPERM';
+    }
+}
+
+// O dono regrava a trava de tempos em tempos, com o progresso (que aparece no
+// aviso da busca dos outros servidores). Só enquanto ela for dele: se outro
+// servidor a assumiu, para de regravar e termina o trabalho sem trava.
+function comecarPulso(): void {
+    pulso = setInterval(() => {
+        void (async () => {
+            // 'r+' abre só um arquivo que já existe: se a trava foi apagada (este
+            // servidor a soltou, ou outro a deu por abandonada), não a recria.
+            const arquivo = await open(caminhoDaTrava(), 'r+');
+            try {
+                if (!temTrava || JSON.parse(await arquivo.readFile('utf8')).pid !== process.pid) throw new Error('não é mais nossa');
+                await arquivo.truncate(0);
+                await arquivo.write(conteudoDaTrava(), 0);
+            } finally {
+                await arquivo.close();
+            }
+        })().catch(() => { clearInterval(pulso); pulso = undefined; });
+    }, TRAVA_PULSO_MS);
+    // O pulso sozinho não mantém o processo vivo.
+    pulso.unref();
+    // Ao sair normalmente com a trava, apaga na hora. Encerrado à força, o
+    // processo some e os outros percebem pelo processoVivo.
+    if (!saidaRegistrada) {
+        saidaRegistrada = true;
+        process.on('exit', () => {
+            if (temTrava) apagarTravaSeForNossa(() => readFileSync(caminhoDaTrava(), 'utf8'), () => rmSync(caminhoDaTrava(), { force: true }));
+        });
+    }
+}
+
+// Nunca lança erro: uma trava que não pôde ser apagada (Windows, com o arquivo
+// aberto por um instante) vence sozinha em TRAVA_VENCIDA_MS.
+async function soltarTrava(): Promise<void> {
+    clearInterval(pulso);
+    pulso = undefined;
+    temTrava = false;
+    const conteudo = await readFile(caminhoDaTrava(), 'utf8').catch(() => '');
+    await apagarTravaSeForNossa(() => conteudo, () => rm(caminhoDaTrava(), { force: true }))?.catch(() => {});
+}
+
+// Só apaga a trava se ela ainda for deste processo: nunca a de outro servidor.
+function apagarTravaSeForNossa<T>(ler: () => string, apagar: () => T): T | undefined {
+    try {
+        return JSON.parse(ler()).pid === process.pid ? apagar() : undefined;
+    } catch {
+        return undefined;
+    }
+}
+
+// Espera a trava do outro servidor sumir (ele terminou) ou ser abandonada.
+// Enquanto isso, o progresso dele aparece no aviso da busca e no estudos://indice.
+async function esperarTrava(prazo: number): Promise<void> {
+    while (Date.now() < prazo) {
+        await esperar(TRAVA_CONSULTA_MS);
+        const outro = await travaAtiva();
+        if (!outro) return;
+        Object.assign(status, { porOutro: true, feitos: outro.feitos, total: outro.total });
+    }
+}
+
 // Percorre os arquivos e processa só o que é novo ou mudou (data e tamanho).
 // Roda em segundo plano: o servidor continua respondendo enquanto isso.
 async function construirIndice(): Promise<void> {
     status.estado = 'construindo';
     if (!indice.size) await carregarIndice();
-    const embed = await loadEmbedder();
+    // Outro servidor indexando (6.4b): espera por ele e usa o que ele salvou.
+    // Depois, a atualização abaixo só processa o que ainda faltar.
+    const prazo = Date.now() + TRAVA_ESPERA_MAX_MS;
+    let trava = await pegarTrava();
+    while (trava === 'outro' && Date.now() < prazo) {
+        await esperarTrava(prazo);
+        status.porOutro = false;
+        await recarregarIndice();
+        trava = await pegarTrava();
+    }
+    try {
+        await atualizarArquivos();
+    } finally {
+        status.porOutro = false;
+        if (trava === 'nossa') await soltarTrava();
+    }
+}
+
+async function atualizarArquivos(): Promise<void> {
+    // O modelo só é carregado se algum trecho precisar de vetor: com o índice
+    // em dia, o servidor não ocupa a memória do modelo até a primeira busca.
+    let embed: Embedder | undefined;
     const arquivos = await listNoteFiles(config.notesDir, enabledTypes(SEMANTIC_TYPES));
     const existentes = new Set(arquivos.map(file => relative(config.notesDir, file)));
     // Arquivos apagados saem do índice.
@@ -316,6 +495,7 @@ async function construirIndice(): Promise<void> {
             for (let i = 0; i < faltando.length; i += BATCH_SIZE) {
                 await esperarBuscas();
                 const lote = faltando.slice(i, i + BATCH_SIZE);
+                embed ??= await loadEmbedder();
                 const vetoresLote = await embed(lote);
                 lote.forEach((texto, j) => porTexto.set(texto, toBase64(vetoresLote[j])));
             }
@@ -359,6 +539,8 @@ export function estadoDoIndice() {
         ligada: true,
         estado: status.estado,
         progresso: { feitos: status.feitos, total: status.total },
+        // Outro cliente aberto está montando o índice (6.4b); o progresso é o dele.
+        ...(status.porOutro ? { feitoPorOutroCliente: true } : {}),
         arquivosNoIndice: indice.size,
         trechos,
         atualizadoEm: ultimaAtualizacao ? new Date(ultimaAtualizacao).toISOString() : null,
@@ -388,7 +570,8 @@ export async function semanticSearch(pergunta: string, modulo?: string, tipos?: 
     if (status.estado !== 'construindo' && Date.now() - ultimaAtualizacao > REFRESH_MS) void atualizarIndice();
     if (status.estado === 'erro' && !indice.size) throw new Error(`Busca semântica indisponível: ${status.erro}`);
     // Antes de listar os arquivos o total ainda é 0: "0 de 0" confundiria.
-    const progresso = status.total ? `${status.feitos} de ${status.total} arquivos` : 'preparando';
+    const progresso = (status.total ? `${status.feitos} de ${status.total} arquivos` : 'preparando')
+        + (status.porOutro ? ', feito pelo study-notes-mcp de outro cliente aberto' : '');
     const aviso = status.estado === 'construindo'
         ? `Índice semântico em construção (${progresso}): os resultados por significado podem estar incompletos`
         : undefined;

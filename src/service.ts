@@ -28,7 +28,7 @@
  */
 import { readdir, readFile, writeFile, mkdir, realpath, rename, rm, stat } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
-import { basename, extname, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 // unpdf: extrai o texto de PDFs usando o pdf.js da Mozilla, sem dependências nativas.
@@ -569,17 +569,136 @@ async function pastaDoModulo(modulo?: string): Promise<string> {
 // código custaria milhares de tokens só para listar.
 export const MAX_ARQUIVOS_LISTADOS = 100;
 export type ArquivoListado = { arquivo: string; tipo: Tipo; kb: number };
-export async function listarArquivos(modulo?: string, tipos?: Tipo[]): Promise<{ arquivos: ArquivoListado[]; total: number; porTipo: Partial<Record<Tipo, number>> }> {
-    const files = (await listNoteFiles(await pastaDoModulo(modulo), enabledTypes(tipos)))
+export type ContagemPorTipo = Partial<Record<Tipo, number>>;
+// O título e o começo do README de uma pasta, já passados pelas proteções.
+export type Leiame = { arquivo: string; descricao: string; alertas: string[]; segredos: number };
+// Uma subpasta no panorama de um módulo grande.
+export type PastaResumida = { pasta: string; total: number; porTipo: ContagemPorTipo; leiame?: Leiame };
+export type ListaDeArquivos = {
+    total: number;
+    porTipo: ContagemPorTipo;
+    // Sem panorama: os arquivos (até MAX_ARQUIVOS_LISTADOS). Com panorama: só
+    // os que ficam direto na pasta pedida, fora das subpastas.
+    arquivos: ArquivoListado[];
+    // Só quando há arquivos demais para listar um por um (veja abaixo).
+    panorama?: { pastas: PastaResumida[]; pastasOmitidas: number; soltos: number; leiame?: Leiame };
+};
+
+export async function listarArquivos(modulo?: string, tipos?: Tipo[]): Promise<ListaDeArquivos> {
+    const base = await pastaDoModulo(modulo);
+    // A varredura pega todos os tipos lidos, e o filtro vem depois: o README de
+    // cada pasta serve de descrição mesmo quando o pedido é só PDFs ou código.
+    const todos = await listNoteFiles(base, enabledTypes());
+    const permitidos = enabledTypes(tipos);
+    const files = todos.filter(file => permitidos.includes(typeOf(file)!))
         .sort((a, b) => TYPE_PRIORITY.indexOf(typeOf(a)!) - TYPE_PRIORITY.indexOf(typeOf(b)!) || a.localeCompare(b));
-    const porTipo: Partial<Record<Tipo, number>> = {};
+    const total = files.length;
+    const porTipo = contarPorTipo(files);
+    if (total <= MAX_ARQUIVOS_LISTADOS) return { total, porTipo, arquivos: await comTamanho(files) };
+
+    // Arquivos demais. Os 100 primeiros da lista seriam quase sempre das
+    // primeiras pastas (num curso, só das primeiras aulas), e quem pediu queria
+    // saber o que o módulo inteiro tem. Então a resposta vira um panorama: cada
+    // subpasta com a contagem e o começo do README, numa chamada só. Para ver os
+    // arquivos de uma pasta, o modelo chama listar_arquivos de novo com ela.
+    const grupos = new Map<string, string[]>();
+    const soltos: string[] = [];
+    for (const file of files) {
+        const partes = relative(base, file).split(sep);
+        if (partes.length === 1) soltos.push(file);
+        else grupos.set(partes[0], [...(grupos.get(partes[0]) ?? []), file]);
+    }
+    // Uma pasta só com arquivos soltos não tem panorama: fica a lista cortada.
+    if (!grupos.size) return { total, porTipo, arquivos: await comTamanho(files.slice(0, MAX_ARQUIVOS_LISTADOS)) };
+    // "numeric": aula2 antes de aula10.
+    const nomes = [...grupos.keys()].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    const pastas = await Promise.all(nomes.slice(0, MAX_ARQUIVOS_LISTADOS).map(async nome => ({
+        pasta: relative(config.notesDir, join(base, nome)),
+        total: grupos.get(nome)!.length,
+        porTipo: contarPorTipo(grupos.get(nome)!),
+        leiame: await lerLeiame(join(base, nome), todos),
+    })));
+    return {
+        total, porTipo,
+        arquivos: await comTamanho(soltos.slice(0, MAX_ARQUIVOS_LISTADOS)),
+        panorama: {
+            pastas,
+            pastasOmitidas: Math.max(0, nomes.length - MAX_ARQUIVOS_LISTADOS),
+            soltos: soltos.length,
+            leiame: await lerLeiame(base, todos),
+        },
+    };
+}
+
+function contarPorTipo(files: string[]): ContagemPorTipo {
+    const porTipo: ContagemPorTipo = {};
     for (const file of files) porTipo[typeOf(file)!] = (porTipo[typeOf(file)!] ?? 0) + 1;
-    const arquivos = await Promise.all(files.slice(0, MAX_ARQUIVOS_LISTADOS).map(async file => ({
+    return porTipo;
+}
+
+async function comTamanho(files: string[]): Promise<ArquivoListado[]> {
+    return Promise.all(files.map(async file => ({
         arquivo: relative(config.notesDir, file),
         tipo: typeOf(file)!,
         kb: Math.max(1, Math.round(((await stat(file).catch(() => undefined))?.size ?? 0) / 1024)),
     })));
-    return { arquivos, total: files.length, porTipo };
+}
+
+// O README de uma pasta (o primeiro destes nomes que existir direto nela). Ele
+// é procurado entre os arquivos da varredura, e não direto no disco: assim vale
+// tudo que a varredura já respeita (.studynotesignore, ocultos, symlinks).
+const NOMES_LEIAME = ['readme.md', 'leiame.md', 'index.md', 'unidade.md'];
+const MAX_DESCRICAO = 300;
+async function lerLeiame(pasta: string, arquivos: string[]): Promise<Leiame | undefined> {
+    const daPasta = arquivos.filter(file => dirname(file) === pasta);
+    const arquivo = NOMES_LEIAME.map(nome => daPasta.find(file => basename(file).toLowerCase() === nome)).find(Boolean);
+    if (!arquivo) return undefined;
+    try {
+        if ((await stat(arquivo)).size > MAX_FILE_BYTES) return undefined;
+        const descricao = descricaoDoLeiame(await readFile(arquivo, 'utf8'));
+        if (!descricao) return undefined;
+        // É conteúdo de arquivo: passa pelas mesmas proteções da leitura (PASSO 4.4).
+        const { text, alertas, segredos } = prepareUntrusted(descricao);
+        return { arquivo: basename(arquivo), descricao: text, alertas, segredos };
+    } catch {
+        // Um README ilegível não derruba a listagem: a pasta só fica sem descrição.
+        return undefined;
+    }
+}
+
+// Título (o primeiro # ...) e o primeiro parágrafo de um README, numa linha só.
+// Pula o que não descreve a pasta: blocos de código, imagens e selos, tabelas,
+// comentários HTML e linhas horizontais.
+export function descricaoDoLeiame(texto: string): string {
+    let titulo = '';
+    const paragrafo: string[] = [];
+    let emBlocoDeCodigo = false;
+    for (const bruta of texto.split('\n')) {
+        const linha = bruta.trim();
+        if (/^(```|~~~)/.test(linha)) {
+            emBlocoDeCodigo = !emBlocoDeCodigo;
+            if (paragrafo.length) break;
+            continue;
+        }
+        if (emBlocoDeCodigo) continue;
+        const ehTitulo = /^#{1,6}\s/.test(linha);
+        if (ehTitulo && !titulo && !paragrafo.length) {
+            titulo = linha.replace(/^#+\s*/, '');
+            continue;
+        }
+        if (!linha || ehTitulo || /^(<!--|!\[|\[!\[|<img|<\/?(p|div|br)\b|\||---|\*\*\*|___)/i.test(linha)) {
+            if (paragrafo.length) break;
+            continue;
+        }
+        paragrafo.push(linha.replace(/^>\s?/, '').replace(/^[-*+]\s+/, ''));
+    }
+    const descricao = [titulo, paragrafo.join(' ')].filter(Boolean).join(' — ');
+    if (descricao.length <= MAX_DESCRICAO) return descricao;
+    // Corta no último espaço antes do limite. Sem espaço por perto (um link
+    // enorme), corta no limite, sem partir um emoji (2 unidades) ao meio.
+    let fim = descricao.lastIndexOf(' ', MAX_DESCRICAO);
+    if (fim < MAX_DESCRICAO * 0.7) fim = /[\uD800-\uDBFF]/.test(descricao[MAX_DESCRICAO - 1]) ? MAX_DESCRICAO - 1 : MAX_DESCRICAO;
+    return `${descricao.slice(0, fim).trimEnd()}…`;
 }
 
 // Busca LITERAL: procura o termo exato, sem diferenciar maiúsculas/minúsculas
