@@ -14,6 +14,7 @@ Copilot:  Chunking divide documentos grandes em trechos menores antes de gerar
 - **Respostas com fonte:** cada informação vem com `arquivo:linha` ou `arquivo, p. N`, para você conferir.
 - **Acha pelo assunto:** com a [busca por significado](https://github.com/wasinskivini/study-notes-mcp/blob/main/docs/busca-por-significado.md) ligada, "como cortar documentos grandes?" encontra a nota sobre *chunking*, mesmo sem a palavra.
 - **Local e gratuito:** roda no seu computador, sem chave de API, sem Ollama e sem banco de dados.
+- **Só lê o seu material:** nenhuma tool cria, edita ou apaga arquivos da pasta de estudos. O que o servidor grava (dúvidas e progresso) fica em arquivos próprios, separados do material.
 - **Seguro com conteúdo não confiável:** mascara segredos e avisa sobre *prompt injection* nos arquivos lidos.
 - **Funciona com qualquer pasta:** anotações em Markdown, PDFs das aulas, código e notas do [Obsidian](https://obsidian.md).
 
