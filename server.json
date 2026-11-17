@@ -2,17 +2,17 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.wasinskivini/study-notes-mcp",
   "title": "Study Notes MCP",
-  "description": "Busca nas suas anotações, PDFs e código citando a fonte; dúvidas, progresso e quizzes.",
+  "description": "Busca nas suas anotações, PDFs e código (só leitura) citando a fonte; dúvidas, progresso e quizzes.",
   "repository": {
     "url": "https://github.com/wasinskivini/study-notes-mcp",
     "source": "github"
   },
-  "version": "1.4.0",
+  "version": "1.4.1",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "study-notes-mcp",
-      "version": "1.4.0",
+      "version": "1.4.1",
       "transport": {
         "type": "stdio"
       },

@@ -2,6 +2,16 @@
 
 As mudanças de cada versão. O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/), e as versões seguem o [Versionamento Semântico](https://semver.org/lang/pt-BR/): a versão maior muda quando algo deixa de funcionar como antes (nome de tool, parâmetro, formato dos dados salvos).
 
+## [1.4.1] - 2026-11-17
+
+A descrição do servidor passa a dizer o que ele não faz: alterar o seu material. Nenhuma tool mudou.
+
+### Alterado
+- **A descrição deixa claro que o servidor só lê o material.** Pelo nome, o servidor parece um app de notas, e quem o avalia pela lista de tools (diretórios de servidores MCP, como o Glama) sente falta de tools para criar e editar notas. Elas ficam de fora de propósito: nenhuma tool cria, edita ou apaga arquivos da pasta de estudos, e as de escrita gravam só dúvidas e progresso, em `DATA_DIR`. Isso agora está escrito na descrição do npm e do MCP Registry, no README e nas instruções que o servidor manda ao modelo.
+
+### Corrigido
+- O `.env.example` dizia que o modelo da busca por significado tem ~145 MB. Desde a 1.3.0, são ~310 MB.
+
 ## [1.4.0] - 2026-11-16
 
 Correções encontradas no uso real. À pergunta "o que eu tenho no material sobre o módulo 4?", o Claude Code respondeu abrindo a pasta pelo terminal, em vez de usar o servidor. Com vários clientes abertos, cada um montava o mesmo índice ao mesmo tempo. E a busca por significado precisava de internet toda vez que o modelo era carregado.

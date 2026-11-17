@@ -1,8 +1,8 @@
 {
   "name": "study-notes-mcp",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "mcpName": "io.github.wasinskivini/study-notes-mcp",
-  "description": "Servidor MCP para estudar com IA: busca híbrida (texto exato + significado, local e sem chave de API) em anotações, PDFs e código, sempre citando a fonte; dúvidas, progresso e quizzes",
+  "description": "Servidor MCP para estudar com IA: busca híbrida (texto exato + significado, local e sem chave de API) em anotações, PDFs e código, sempre citando a fonte e sem alterar o material; dúvidas, progresso e quizzes",
   "main": "dist/index.js",
   "bin": {
     "study-notes-mcp": "dist/index.js"
